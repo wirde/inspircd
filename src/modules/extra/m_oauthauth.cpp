@@ -20,13 +20,9 @@ enum AuthState {
 
 static size_t callback_func(char *stream, size_t size, size_t nmemb, void *buffer)
 {
-	void **buffer2 = (void**)buffer;
 	size_t realsize = size*nmemb;
-	ServerInstance->Logs->Log("MODULE", DEBUG, "callback lenght = " + std::to_string(realsize));
-	*buffer2 = malloc(realsize + 1);
-	memcpy(*buffer2, stream, (realsize));
-	((char*)*buffer2)[realsize] = '\0';
-	ServerInstance->Logs->Log("MODULE", DEBUG, "buffer = " + std::string((char*)*buffer2));
+	*(static_cast<std::string*>(buffer)) = std::string(stream);
+	ServerInstance->Logs->Log("MODULE", DEBUG, "buffer = " + std::string((char*)buffer));
 	return realsize;
 }
 
@@ -48,7 +44,7 @@ class ModuleOauthAuth : public Module
 	{
 	    CURLcode curlInit = curl_global_init(CURL_GLOBAL_ALL);
 	    if (curlInit) {
-			return;
+			 throw ModuleException("Unable to initialize curl in m_oauthauth.");
 	    }
 	    
 		ServerInstance->Modules->AddService(pendingExt);
@@ -84,8 +80,7 @@ class ModuleOauthAuth : public Module
         } 
         uPos++;
         std::string userId = toParse.substr(0, uPos - 1);
-        toParse = toParse.substr(uPos, toParse.size() - uPos);
-		size_t aPos = toParse.find_first_of('&');
+		size_t aPos = toParse.find_first_of('&', uPos);
 
         if (aPos == std::string::npos)
         {
@@ -95,13 +90,14 @@ class ModuleOauthAuth : public Module
             return MOD_RES_PASSTHRU;
         } 
         aPos++;
-        std::string avatarId = toParse.substr(0, aPos - 1);
-		std::string token = toParse.substr(aPos, toParse.size() - aPos);
+		std::string avatarId = toParse.substr(uPos, (aPos - 1) - uPos);
+		std::string token = toParse.substr(aPos, toParse.size() - (aPos + uPos));
 		if (token.empty())
 		{
 			//Pass not in correct format
             pendingExt.set(user, AUTH_STATE_FAIL);
 			ServerInstance->Logs->Log("MODULE", DEBUG, "token not found");
+			ServerInstance->Logs->Log("MODULE", DEBUG, "token = " + token + " avatardId = " + avatarId);
             return MOD_RES_PASSTHRU;
 		}
 
@@ -193,12 +189,13 @@ class ModuleOauthAuth : public Module
         CURL *curl = curl_easy_init();
         if (curl) 
         {
-			char* data;
+			std::string *data = new std::string();
             curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &data);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, data);
 			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &callback_func);
             curl_easy_perform(curl);
-			displayName = std::string(data);
+			displayName = *data;
+			free(data);
 			displayName.erase(0,1);
 			displayName.erase(displayName.size() - 1,1);
             curl_easy_cleanup(curl);
