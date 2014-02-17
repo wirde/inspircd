@@ -44,7 +44,7 @@ class ModuleOauthAuth : public Module
 	{
 	    CURLcode curlInit = curl_global_init(CURL_GLOBAL_ALL);
 	    if (curlInit) {
-			return;
+			 throw ModuleException("Unable to initialize curl in m_oauthauth.");
 	    }
 	    
 		ServerInstance->Modules->AddService(pendingExt);
