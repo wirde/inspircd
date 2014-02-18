@@ -18,11 +18,11 @@ enum AuthState {
 	AUTH_STATE_FAIL = 2
 };
 
-static size_t callback_func(char *stream, size_t size, size_t nmemb, void *buffer)
+static size_t callback_func(char* stream, size_t size, size_t nmemb, void* userPtr)
 {
 	size_t realsize = size*nmemb;
-	*(static_cast<std::string*>(buffer)) = std::string(stream);
-	ServerInstance->Logs->Log("MODULE", DEBUG, "buffer = " + std::string((char*)buffer));
+	std::string* userStr = static_cast<std::string*>(userPtr);
+	userStr->append(stream, realsize);
 	return realsize;
 }
 
@@ -33,7 +33,6 @@ class ModuleOauthAuth : public Module
 	std::string killreason;
 	std::string identityServer;
 	std::string worldServer;
-	std::string displayName;
 
  public:
 	ModuleOauthAuth() : pendingExt("oauthauth-wait", this)
@@ -66,9 +65,8 @@ class ModuleOauthAuth : public Module
 		if (pendingExt.get(user))
 			return MOD_RES_PASSTHRU;
 
-        //TODO: Use of fields other than nick possible?
         std::string toParse  = user->password;
-        std::string nick = user->nick;
+
         size_t uPos = toParse.find_first_of('&');
 
         if (uPos == std::string::npos)
@@ -101,14 +99,14 @@ class ModuleOauthAuth : public Module
             return MOD_RES_PASSTHRU;
 		}
 
-        //TODO: Sync call might not be ok - look into threading model...
-		//Consider doing this async?
+        //TODO: The remote calls must be changed to be non-blocking at some point for performance!
         bool validToken = checkToken(identityServer, userId, avatarId, token);
         if (validToken) 
         {
             pendingExt.set(user, AUTH_STATE_NONE);
             //Change nick to the displayName
-			if (fetchDisplayName(worldServer, avatarId))
+            std::string displayName = fetchDisplayName(worldServer, avatarId);
+			if (displayName != "")
 			{
 				user->ChangeNick(displayName);
 			}
@@ -179,7 +177,7 @@ class ModuleOauthAuth : public Module
         return false;
     }
 
-	bool fetchDisplayName(const std::string& baseUrl, const std::string& avatarId)
+	std::string fetchDisplayName(const std::string& baseUrl, const std::string& avatarId)
     {
     	std::string url = baseUrl;
         url += "/avatars/";
@@ -189,19 +187,23 @@ class ModuleOauthAuth : public Module
         CURL *curl = curl_easy_init();
         if (curl) 
         {
-			std::string *data = new std::string();
+			std::string displayName;
             curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-			curl_easy_setopt(curl, CURLOPT_WRITEDATA, data);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, &displayName);
 			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &callback_func);
             curl_easy_perform(curl);
-			displayName = *data;
-			free(data);
+            long statusCode;
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &statusCode);
+            //DisplayName is returned as a "json string" - enclosed with quotes
+            if (statusCode < 200 || statusCode > 299 || displayName.length() <= 2)
+                return "";
+                
 			displayName.erase(0,1);
 			displayName.erase(displayName.size() - 1,1);
             curl_easy_cleanup(curl);
-			return true;
+			return displayName;
     	}
-		return false;
+		return "";
     }
 };
 
